@@ -69,31 +69,33 @@ mkFakeMavenSettings = do
     "<settings>" <|> "</settings>"
   return mavenTmp
 
+-- TODO: Move
+data PomToken = PomTokenName Text | PomTokenPackaging Text | PomTokenOther
+
 parseMvnArtifact :: Text -> Either Text MvnArtifact
-parseMvnArtifact = M.parse (parser) "<input>" >>> first (T.pack . parseErrorPretty)
+parseMvnArtifact = M.parse mvnParser "<input>" >>> first (T.pack . parseErrorPretty)
   where
-    pomParser :: Text -> MT.Parser Text
-    pomParser identifier = do
-      _ <- M.string $ T.unpack identifier
+    pomParser :: MT.Parser PomToken
+    pomParser = do
+      identifier <- T.strip . T.pack <$> M.someTill M.printChar (M.char '=')
       M.space
       _ <- M.char '='
       M.space
       name <- T.pack <$> M.some M.printChar
-      _ <- M.eol
-      return name
 
-    nameParser = pomParser "POM_NAME"
-    packagingParser = pomParser "POM_PACKAGING"
+      return $ case identifier of
+        "POM_NAME" -> PomTokenName name
+        "POM_PACKAGING" -> PomTokenPackaging name
+        _ -> PomTokenOther
 
-    parser :: MT.Parser MvnArtifact
-    parser = do
-      mvnName <- nameParser
-      mvnPackaging <- (try packagingParser) <|> (skipMany any)
+    mvnParser :: MT.Parser MvnArtifact
+    mvnParser = do
+      pomItems <- M.many pomParser
       return MvnArtifact{..}
 
 mvnArtifactToVersionedIdentifier :: MvnArtifact -> Text -> Text
 mvnArtifactToVersionedIdentifier MvnArtifact{..} version =
-  format ("com.facebook.litho:%s:%s:%s") mvnName version mvnPackaging
+  format ("com.facebook.litho:"%s%":"%s%":"%s) mvnName version mvnPackaging
 
 buildMvnGetCommand :: MvnArtifact -> Text -> FilePath -> (T.Text, [T.Text])
 buildMvnGetCommand artifact version configDir =
@@ -101,7 +103,7 @@ buildMvnGetCommand artifact version configDir =
   , [ "dependency:get"
     , "-gs"
     , format fp (configDir </> "settings.xml")
-    , "-Dartifact=" <> mvnArtifactToIdentifier
+    , "-Dartifact=" <> (mvnArtifactToVersionedIdentifier artifact version)
     , "-DremoteRepositories=" <> T.intercalate "," (remoteRepositoryToString <$> remoteRepositories)
     , "-Dtransitive=true"]
   )
@@ -119,10 +121,10 @@ main = do
 
   sh $ do
     mavenTmp <- mkFakeMavenSettings
-    gradleProperties <- find (suffix "/gradle.properties") rootDir
-    line <- grep (has "POM_ARTIFACT_ID") (input gradleProperties)
-    case parseMvnArtifact line of
-      Left err -> printf ("Skipping unsupported mvn line '"%s%"' because of error "%s%".\n") (T.strip (format l line)) err
+    gradleProperties :: FilePath <- find (suffix "/gradle.properties") rootDir
+    contents <- liftIO $ readTextFile gradleProperties
+    case parseMvnArtifact contents of
+      Left err' -> printf ("Skipping unsupported file '"%fp%"' because of error "%s%".\n") gradleProperties err'
       Right mvnArtifact -> do
         printf ("Downloading Maven artifact for "%w%" ...\n") mvnArtifact
         let (cmd, args) = buildMvnGetCommand mvnArtifact version mavenTmp
