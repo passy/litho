@@ -48,7 +48,7 @@ parser :: Turtle.Parser Text
 parser = argText "VERSION" "Version number to verify"
 
 data MvnArtifact = MvnArtifact
-  { mvnName :: Text
+  { mvnArtifactId :: Text
   , mvnPackaging :: Text
   } deriving Show
 
@@ -69,33 +69,33 @@ mkFakeMavenSettings = do
     "<settings>" <|> "</settings>"
   return mavenTmp
 
--- TODO: Move
-data PomToken = PomTokenName Text | PomTokenPackaging Text | PomTokenOther
-
 parseMvnArtifact :: Text -> Either Text MvnArtifact
 parseMvnArtifact = M.parse mvnParser "<input>" >>> first (T.pack . parseErrorPretty)
   where
-    pomParser :: MT.Parser PomToken
+    pomParser :: MT.Parser (Text, Text)
     pomParser = do
       identifier <- T.strip . T.pack <$> M.someTill M.printChar (M.char '=')
-      M.space
-      _ <- M.char '='
-      M.space
-      name <- T.pack <$> M.some M.printChar
+      _ <- M.many M.spaceChar
+      value <- T.strip . T.pack <$> M.some M.printChar
 
-      return $ case identifier of
-        "POM_NAME" -> PomTokenName name
-        "POM_PACKAGING" -> PomTokenPackaging name
-        _ -> PomTokenOther
+      return (identifier, value)
 
     mvnParser :: MT.Parser MvnArtifact
     mvnParser = do
-      pomItems <- M.many pomParser
+      pomItems <- M.many (pomParser <* M.eol)
+      case reducePomTokens pomItems of
+        Just a -> return a
+        Nothing -> error "Couldn't find required pom tokens."
+
+    reducePomTokens :: [(Text, Text)] -> Maybe MvnArtifact
+    reducePomTokens ts = do
+      mvnArtifactId <- lookup "POM_ARTIFACT_ID" ts
+      mvnPackaging <- lookup "POM_PACKAGING" ts
       return MvnArtifact{..}
 
 mvnArtifactToVersionedIdentifier :: MvnArtifact -> Text -> Text
 mvnArtifactToVersionedIdentifier MvnArtifact{..} version =
-  format ("com.facebook.litho:"%s%":"%s%":"%s) mvnName version mvnPackaging
+  format ("com.facebook.litho:"%s%":"%s%":"%s) mvnArtifactId version mvnPackaging
 
 buildMvnGetCommand :: MvnArtifact -> Text -> FilePath -> (T.Text, [T.Text])
 buildMvnGetCommand artifact version configDir =
@@ -128,9 +128,10 @@ main = do
       Right mvnArtifact -> do
         printf ("Downloading Maven artifact for "%w%" ...\n") mvnArtifact
         let (cmd, args) = buildMvnGetCommand mvnArtifact version mavenTmp
-        ret <- proc cmd args empty
-        case ret of
-          ExitSuccess -> return ()
-          ExitFailure _ -> die $ format ("Couldn't download Maven artifact "%w%". Looks like something went screwy.") mvnArtifact
+        printf ("Executing "%s%" "%w%" ...") cmd args
+        -- ret <- proc cmd args empty
+        -- case ret of
+        --   ExitSuccess -> return ()
+        --   ExitFailure _ -> die $ format ("Couldn't download Maven artifact "%w%". Looks like something went screwy.") mvnArtifact
 
   echo "Done!"
