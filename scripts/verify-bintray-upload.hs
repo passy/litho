@@ -71,23 +71,22 @@ mkFakeMavenSettings = do
   return mavenTmp
 
 parseMvnArtifact :: Text -> Either Text MvnArtifact
-parseMvnArtifact = M.parse mvnParser "<input>" >>> first (T.pack . M.parseErrorPretty)
+parseMvnArtifact = M.parse (mvnParser <* M.eof) "<input>" >>> first (T.pack . M.parseErrorPretty)
   where
     pomParser :: MT.Parser (Text, Text)
     pomParser = do
       identifier <- T.strip . T.pack <$> M.someTill M.printChar (M.char '=')
-      _ <- M.many M.spaceChar
+      M.space
       value <- T.strip . T.pack <$> M.some M.printChar
 
       return (identifier, value)
 
     emptyLineParser :: forall a. MT.Parser (Maybe a)
-    emptyLineParser = M.space *> return Nothing
+    emptyLineParser = M.some M.spaceChar >> M.optional M.newline *> pure Nothing
 
     mvnParser :: MT.Parser MvnArtifact
     mvnParser = do
-      pomItems <- M.many ((M.try (Just <$> pomParser) <|> emptyLineParser) <* M.eol)
-      M.eof
+      pomItems <- M.many (((Just <$> pomParser) <* M.eol) <|> emptyLineParser)
       case reducePomTokens (catMaybes pomItems) of
         Just a -> return a
         Nothing -> M.unexpected (M.Label $ fromList "Missing POM identifiers.")
@@ -133,7 +132,7 @@ main = do
       Right mvnArtifact -> do
         printf ("Downloading Maven artifact for "%w%" ...\n") mvnArtifact
         let (cmd, args) = buildMvnGetCommand mvnArtifact version mavenTmp
-        printf ("Executing "%s%" "%w%" ...") cmd args
+        printf ("Executing "%s%" "%w%" ...\n") cmd args
         -- ret <- proc cmd args empty
         -- case ret of
         --   ExitSuccess -> return ()
