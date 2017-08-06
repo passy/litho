@@ -13,13 +13,14 @@ import Turtle
 
 import Control.Arrow ((>>>))
 import Data.Bifunctor (first)
-import Data.Maybe (fromMaybe)
-import Text.Megaparsec as M
-import Text.Megaparsec.Text as MT
+import Data.Maybe (fromMaybe, catMaybes)
+import Data.List.NonEmpty (fromList)
 import PseudoMacros (__FILE__)
 
 import qualified Filesystem.Path.CurrentOS as Path
 import qualified Control.Monad.Managed as Managed
+import qualified Text.Megaparsec.Text as MT
+import qualified Text.Megaparsec as M
 import qualified Data.Text as T
 
 -- * Global settings
@@ -70,7 +71,7 @@ mkFakeMavenSettings = do
   return mavenTmp
 
 parseMvnArtifact :: Text -> Either Text MvnArtifact
-parseMvnArtifact = M.parse mvnParser "<input>" >>> first (T.pack . parseErrorPretty)
+parseMvnArtifact = M.parse mvnParser "<input>" >>> first (T.pack . M.parseErrorPretty)
   where
     pomParser :: MT.Parser (Text, Text)
     pomParser = do
@@ -80,12 +81,16 @@ parseMvnArtifact = M.parse mvnParser "<input>" >>> first (T.pack . parseErrorPre
 
       return (identifier, value)
 
+    emptyLineParser :: forall a. MT.Parser (Maybe a)
+    emptyLineParser = M.space *> return Nothing
+
     mvnParser :: MT.Parser MvnArtifact
     mvnParser = do
-      pomItems <- M.many (pomParser <* M.eol)
-      case reducePomTokens pomItems of
+      pomItems <- M.many ((M.try (Just <$> pomParser) <|> emptyLineParser) <* M.eol)
+      M.eof
+      case reducePomTokens (catMaybes pomItems) of
         Just a -> return a
-        Nothing -> error "Couldn't find required pom tokens."
+        Nothing -> M.unexpected (M.Label $ fromList "Missing POM identifiers.")
 
     reducePomTokens :: [(Text, Text)] -> Maybe MvnArtifact
     reducePomTokens ts = do
