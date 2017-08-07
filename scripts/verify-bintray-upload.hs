@@ -42,6 +42,7 @@ remoteRepositoryToString RemoteRepository{..} =
 remoteRepositories :: [RemoteRepository]
 remoteRepositories =
   [ RemoteRepository "jcenter" Nothing "https://jcenter.bintray.com/"
+  , RemoteRepository "google" Nothing "https://maven.google.com/"
   ]
 
 -- * Application logic
@@ -110,7 +111,8 @@ buildMvnGetCommand artifact version configDir =
     , format fp (configDir </> "settings.xml")
     , "-Dartifact=" <> (mvnArtifactToVersionedIdentifier artifact version)
     , "-DremoteRepositories=" <> T.intercalate "," (remoteRepositoryToString <$> remoteRepositories)
-    , "-Dtransitive=true"]
+    -- Would be nice to also check transitive deps, but mvn get doesn't support resolving transitive AARs.
+    , "-Dtransitive=false"]
   )
 
 main :: IO ()
@@ -141,7 +143,7 @@ main = do
             ExitSuccess ->
               return (gradleProperties, True)
             ExitFailure code -> do
-              printf ("Download of Maven artifact "%w%" failed with status code "%d%". Looks like something went screwy.") mvnArtifact code
+              printf ("Download of Maven artifact "%w%" failed with status code "%d%". Looks like something went screwy.\n") mvnArtifact code
               return (gradleProperties, False)
 
   fold prog (Fold.all $ (== True) . snd) >>= \case
@@ -149,5 +151,5 @@ main = do
       echo "All artifacts seem to have been uploaded. Sweet!"
       exit ExitSuccess
     False -> do
-      echo "ERROR: Some artifacts are missing from Bintray!"
+      err "ERROR: Some artifacts are missing from Bintray!"
       exit $ ExitFailure 1
