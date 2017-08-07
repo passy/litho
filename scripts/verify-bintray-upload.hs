@@ -1,6 +1,24 @@
 #!/usr/bin/env stack
 -- stack --resolver lts-9.0 --install-ghc runghc --package turtle --package system-filepath --package pseudomacros --package megaparsec --package bifunctors
 
+{-
+
+This script verifies that for a given version number, all Litho artifacts were
+successfully uploaded to Bintray. Due to service flakiness, sometimes one or
+more artifacts don't actually end up getting published and we want to have
+an automated way to check whether or not an upload succeded.
+
+This script works by simply passing it the version number you want to check.
+On Mac OS you may also need to disable IPv6 because reasons.
+
+  scripts/verify-bintray-upload.hs 0.5.0
+
+Or with disabling the IPv6 stack in the JVM:
+
+  env JAVA_TOOL_OPTIONS="-Djava.net.preferIPv6Addresses=false" scripts/verify-bintray-upload.hs 0.5.0
+
+-}
+
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
