@@ -22,6 +22,7 @@ import qualified Control.Monad.Managed as Managed
 import qualified Text.Megaparsec.Text as MT
 import qualified Text.Megaparsec as M
 import qualified Data.Text as T
+import qualified Control.Foldl as Fold
 
 -- * Global settings
 
@@ -123,19 +124,30 @@ main = do
     Just _ -> return ()
     Nothing -> die "This tool requires `mvn` (Apache Maven) to be on your $PATH."
 
-  sh $ do
-    mavenTmp <- mkFakeMavenSettings
-    gradleProperties :: FilePath <- find (suffix "/gradle.properties") rootDir
-    contents <- liftIO $ readTextFile gradleProperties
-    case parseMvnArtifact contents of
-      Left err' -> printf ("Skipping unsupported file '"%fp%"' because of error "%s%".\n") gradleProperties err'
-      Right mvnArtifact -> do
-        printf ("Downloading Maven artifact for "%w%" ...\n") mvnArtifact
-        let (cmd, args) = buildMvnGetCommand mvnArtifact version mavenTmp
-        printf ("Executing "%s%" "%w%" ...\n") cmd args
-        -- ret <- proc cmd args empty
-        -- case ret of
-        --   ExitSuccess -> return ()
-        --   ExitFailure _ -> die $ format ("Couldn't download Maven artifact "%w%". Looks like something went screwy.") mvnArtifact
+  let prog = do
+      mavenTmp <- mkFakeMavenSettings
+      gradleProperties :: FilePath <- find (suffix "/gradle.properties") rootDir
+      contents <- liftIO $ readTextFile gradleProperties
+      case parseMvnArtifact contents of
+        Left err' -> do
+          printf ("Skipping unsupported file '"%fp%"' because of error "%s%".\n") gradleProperties err'
+          return (gradleProperties, True)
+        Right mvnArtifact -> do
+          printf ("Downloading Maven artifact for "%w%" ...\n") mvnArtifact
+          let (cmd, args) = buildMvnGetCommand mvnArtifact version mavenTmp
+          printf ("Executing "%s%" "%w%" ...\n") cmd args
+          ret <- proc cmd args empty
+          case ret of
+            ExitSuccess ->
+              return (gradleProperties, True)
+            ExitFailure code -> do
+              printf ("Download of Maven artifact "%w%" failed with status code "%d%". Looks like something went screwy.") mvnArtifact code
+              return (gradleProperties, False)
 
-  echo "Done!"
+  fold prog (Fold.all $ (== True) . snd) >>= \case
+    True -> do
+      echo "All artifacts seem to have been uploaded. Sweet!"
+      exit ExitSuccess
+    False -> do
+      echo "ERROR: Some artifacts are missing from Bintray!"
+      exit $ ExitFailure 1

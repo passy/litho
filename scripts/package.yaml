@@ -28,3 +28,4 @@ executables:
       - megaparsec
       - bifunctors
       - managed
+      - foldl
