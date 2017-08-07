@@ -88,7 +88,7 @@ parseMvnArtifact = M.parse (mvnParser <* M.eof) "<input>" >>> first (T.pack . M.
 
     mvnParser :: MT.Parser MvnArtifact
     mvnParser = do
-      pomItems <- M.many (((Just <$> pomParser) <* M.eol) <|> emptyLineParser)
+      pomItems <- M.many $ ((Just <$> pomParser) <* M.eol) <|> emptyLineParser
       case reducePomTokens (catMaybes pomItems) of
         Just a -> return a
         Nothing -> M.unexpected (M.Label $ fromList "Missing POM identifiers.")
@@ -115,11 +115,19 @@ buildMvnGetCommand artifact version configDir =
     , "-Dtransitive=false"]
   )
 
+-- | Ensure that the given directory sits at least one
+--   level deep inside the given prefix.
+isSubDir :: FilePath -> FilePath -> Bool
+isSubDir prefix' path =
+  stripPrefix prefix' path & \case
+    Just dir -> length (splitDirectories dir) > 1
+    Nothing -> False
+
 main :: IO ()
 main = do
   version <- options "Bintray Upload Verifier" parser
   this <- thisDirectory
-  let rootDir = this </> ".."
+  rootDir <- realpath $ this </> ".."
 
   whichMvn <- which "mvn"
   case whichMvn of
@@ -128,7 +136,8 @@ main = do
 
   let prog = do
       mavenTmp <- mkFakeMavenSettings
-      gradleProperties :: FilePath <- find (suffix "/gradle.properties") rootDir
+      gradleProperties :: FilePath <- realpath =<< find (suffix "/gradle.properties") rootDir
+      guard $ isSubDir rootDir gradleProperties
       contents <- liftIO $ readTextFile gradleProperties
       case parseMvnArtifact contents of
         Left err' -> do
